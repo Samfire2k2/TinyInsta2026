@@ -19,6 +19,7 @@ ATTENTION: Ce script écrit directement dans Datastore du projet courant (gcloud
 from __future__ import annotations
 import argparse
 import random
+import time
 from datetime import datetime, timedelta
 from google.cloud import datastore
 
@@ -31,24 +32,61 @@ def parse_args():
     p.add_argument('--follows-max', type=int, default=3)
     p.add_argument('--prefix', type=str, default='user')
     p.add_argument('--dry-run', action='store_true')
+    p.add_argument('--clear', action='store_true', help="Supprime les posts et users existants avant de seeder")
     return p.parse_args()
 
+def clear_all_data(client: datastore.Client):
+    """Supprime proprement les entités Post et User par batchs."""
+    print("[Seed] Nettoyage du Datastore...")
+
+    # Sur les bases "Enterprise" ou nommées 'default', la requête sur __kind__ 
+    # est interdite via l'API Datastore. On nettoie donc les types connus en dur.
+    kinds = ['Post', 'User']
+    print(f"[Seed] Suppression des entités pour les types: {kinds}")
+
+    for kind in kinds:
+        deleted_count = 0
+        while True:
+            try:
+                query = client.query(kind=kind)
+                query.keys_only()
+                # Utilisation d'un timeout de 180s pour éviter les erreurs 504
+                entities = list(query.fetch(limit=500, timeout=180))
+                if not entities:
+                    break
+                
+                keys = [e.key for e in entities]
+                client.delete_multi(keys)
+                deleted_count += len(keys)
+                print(f"  [Seed] Nettoyage {kind}: {deleted_count} supprimés...", end="\r", flush=True)
+            except Exception as e:
+                print(f"\n[Seed] Pause de 5s suite à une erreur (timeout ?): {e}")
+                time.sleep(5)
+                continue
+        print(f"\n[Seed] Kind {kind} nettoyé.")
 
 def ensure_users(client: datastore.Client, names: list[str], dry: bool):
-    created = 0
+    """Crée les utilisateurs en utilisant put_multi pour la performance."""
+    users_to_create = []
     for name in names:
         key = client.key('User', name)
         entity = client.get(key)
         if entity is None:
             entity = datastore.Entity(key)
             entity['follows'] = []
-            if not dry:
-                client.put(entity)
-            created += 1
-    return created
+            users_to_create.append(entity)
+    
+    if not dry and users_to_create:
+        # Datastore limite à 500 entités par appel multi
+        for i in range(0, len(users_to_create), 500):
+            client.put_multi(users_to_create[i:i+500])
+            
+    return len(users_to_create)
 
 
 def assign_follows(client: datastore.Client, names: list[str], fmin: int, fmax: int, dry: bool):
+    """Ajuste les relations de suivi en masse."""
+    updated_users = []
     for name in names:
         key = client.key('User', name)
         entity = client.get(key)
@@ -64,16 +102,21 @@ def assign_follows(client: datastore.Client, names: list[str], fmin: int, fmax: 
         existing = set(entity.get('follows', []))
         new_set = sorted(existing.union(selection))
         entity['follows'] = new_set
-        if not dry:
-            client.put(entity)
+        updated_users.append(entity)
+
+    if not dry and updated_users:
+        for i in range(0, len(updated_users), 500):
+            client.put_multi(updated_users[i:i+500])
 
 
 def create_posts(client: datastore.Client, names: list[str], total_posts: int, dry: bool):
+    """Crée les posts par batchs de 500 pour optimiser l'injection."""
     if not names or total_posts <= 0:
         return 0
-    created = 0
-    # Répartition simple: choix aléatoire d'auteur pour chaque post
+    
+    posts_batch = []
     base_time = datetime.utcnow()
+    
     for i in range(total_posts):
         author = random.choice(names)
         key = client.key('Post')
@@ -82,21 +125,35 @@ def create_posts(client: datastore.Client, names: list[str], total_posts: int, d
         post['author'] = author
         post['content'] = f"Seed post {i+1} by {author}"
         post['created'] = base_time - timedelta(seconds=i)
-        if not dry:
-            client.put(post)
-        created += 1
-    return created
+        
+        posts_batch.append(post)
+        
+        # Envoi par paquets de 500
+        if not dry and len(posts_batch) >= 500:
+            client.put_multi(posts_batch)
+            posts_batch = []
+            print(f"  [Seed] {i+1}/{total_posts} posts créés...", end="\r", flush=True)
+
+    if not dry and posts_batch:
+        client.put_multi(posts_batch)
+        
+    return total_posts
 
 
 def main():
     args = parse_args()
-    client = datastore.Client()
+    # Spécifier le projet ET la base résout l'erreur RESOURCE_PROJECT_INVALID
+    client = datastore.Client(project='tiny-494020', database='default')
 
     user_names = [f"{args.prefix}{i}" for i in range(1, args.users + 1)]
 
     print(f"[Seed] Utilisateurs ciblés: {user_names}")
     if args.dry_run:
         print("[Dry-Run] Aucune écriture ne sera effectuée.")
+
+    # Nettoyage si demandé
+    if args.clear and not args.dry_run:
+        clear_all_data(client)
 
     # 1. Users
     new_users = ensure_users(client, user_names, args.dry_run)

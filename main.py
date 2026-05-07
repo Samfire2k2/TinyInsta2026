@@ -1,4 +1,4 @@
-from flask import Flask, request, redirect, url_for, render_template_string, session, jsonify
+from flask import Flask, request, redirect, url_for, render_template, session, jsonify
 from google.cloud import datastore
 from datetime import datetime, timedelta
 import os
@@ -6,33 +6,8 @@ import random
 
 app = Flask(__name__)
 app.secret_key = 'dev-key'  # À changer en prod
-client = datastore.Client()
-
-# Templates HTML minimalistes
-TEMPLATE_INDEX = '''
-<h2>Bienvenue sur Tiny Instagram</h2>
-{% if user %}
-  Connecté en tant que <b>{{ user }}</b> | <a href="/logout">Déconnexion</a><br><br>
-  <form action="/post" method="post">
-    <input name="content" placeholder="Votre message" required>
-    <button>Poster</button>
-  </form>
-  <h3>Timeline</h3>
-  {% for post in timeline %}
-    <div><b>{{ post['author'] }}</b>: {{ post['content'] }}</div>
-  {% endfor %}
-  <h3>Suivre un utilisateur</h3>
-  <form action="/follow" method="post">
-    <input name="to_follow" placeholder="Nom d'utilisateur" required>
-    <button>Suivre</button>
-  </form>
-{% else %}
-  <form action="/login" method="post">
-    <input name="username" placeholder="Nom d'utilisateur" required>
-    <button>Connexion</button>
-  </form>
-{% endif %}
-'''
+# On spécifie le projet et 'default' car la base a été créée avec ce nom explicite
+client = datastore.Client(project='tiny-494020', database='default')
 
 def get_timeline(user: str, limit: int = 20):
     """Retourne la liste des posts (entités) pour la timeline d'un utilisateur."""
@@ -45,74 +20,102 @@ def get_timeline(user: str, limit: int = 20):
         follows = user_entity.get('follows', [])
     follows = list({*follows, user})
 
-    timeline = []
-    used_gql = False
-    try:
-        if hasattr(client, 'gql'):
-            gql = client.gql("SELECT * FROM Post WHERE author IN @authors ORDER BY created DESC")
-            gql.bindings["authors"] = follows
-            timeline = list(gql.fetch(limit=limit))
-            used_gql = True
-    except Exception:
-        pass
-    if not used_gql:
+    all_posts = []
+    # Datastore limite l'opérateur IN à 30 valeurs maximum.
+    # On découpe 'follows' en morceaux de 30 pour éviter les erreurs.
+    for i in range(0, len(follows), 30):
+        chunk = follows[i:i + 30]
         try:
             query = client.query(kind='Post')
-            query.add_filter('author', 'IN', follows)
+            query.add_filter('author', 'IN', chunk)
             query.order = ['-created']
-            timeline = list(query.fetch(limit=limit))
+            all_posts.extend(list(query.fetch(limit=limit)))
         except Exception:
-            posts = []
-            for author in follows:
+            # Fallback manuel si l'index IN n'est pas prêt
+            for author in chunk:
                 q = client.query(kind='Post')
                 q.add_filter('author', '=', author)
                 q.order = ['-created']
-                posts.extend(list(q.fetch(limit=limit)))
-            timeline = sorted(posts, key=lambda p: p.get('created'), reverse=True)[:limit]
-    return timeline
+                all_posts.extend(list(q.fetch(limit=limit)))
+
+    # On trie les résultats combinés et on applique la limite
+    all_posts.sort(key=lambda x: x.get('created', datetime.min), reverse=True)
+    return all_posts[:limit]
 
 
-def seed_data(users: int = 5, posts: int = 30, follows_min: int = 1, follows_max: int = 3, prefix: str = 'user'):
+def seed_data(users: int = 5, posts: int = 30, follows_min: int = 1, follows_max: int = 3, prefix: str = 'user', clear: bool = False):
     """Crée des utilisateurs, leurs relations de suivi et des posts.
     Retourne un dict avec les compteurs. Fait des écritures directes dans Datastore.
     """
+    # Nettoyage si demandé
+    if clear:
+        # Suppression des posts (c'est ce qui s'accumule le plus)
+        query = client.query(kind='Post')
+        query.keys_only()
+        batch = []
+        for entity in query.fetch(batch_size=500):
+            batch.append(entity.key)
+            if len(batch) >= 500:
+                client.delete_multi(batch)
+                batch = []
+        if batch:
+            client.delete_multi(batch)
+
     user_names = [f"{prefix}{i}" for i in range(1, users + 1)]
-    created_users = 0
+    
+    # 1. Gestion des utilisateurs en masse (Batch)
+    keys = [client.key('User', name) for name in user_names]
+    existing_entities = {e.key.name: e for e in client.get_multi(keys)}
+    
+    users_to_put = []
+    created_count = 0
     for name in user_names:
-        key = client.key('User', name)
-        entity = client.get(key)
-        if entity is None:
-            entity = datastore.Entity(key)
+        if name not in existing_entities:
+            entity = datastore.Entity(key=client.key('User', name))
             entity['follows'] = []
-            client.put(entity)
-            created_users += 1
-    # Assign follows
-    for name in user_names:
-        key = client.key('User', name)
-        entity = client.get(key)
+            created_count += 1
+        else:
+            entity = existing_entities[name]
+        
+        # Assignation des follows
         others = [u for u in user_names if u != name]
-        if not others:
-            continue
-        target = random.randint(min(follows_min, len(others)), min(follows_max, len(others))) if follows_max > 0 else 0
-        selection = random.sample(others, target) if target > 0 else []
-        merged = sorted(set(entity.get('follows', [])).union(selection))
-        entity['follows'] = merged
-        client.put(entity)
-    # Posts
-    created_posts = 0
+        if others:
+            target = random.randint(min(follows_min, len(others)), min(follows_max, len(others))) if follows_max > 0 else 0
+            selection = random.sample(others, target) if target > 0 else []
+            # Si clear=True, on remplace la liste, sinon on fusionne
+            if clear:
+                entity['follows'] = sorted(set(selection))
+            else:
+                entity['follows'] = sorted(set(entity.get('follows', [])).union(selection))
+        users_to_put.append(entity)
+
+    # Sauvegarde des utilisateurs par paquets de 500
+    for i in range(0, len(users_to_put), 500):
+        client.put_multi(users_to_put[i:i+500])
+
+    # 2. Création des posts en masse (Batch)
     base_time = datetime.utcnow()
+    posts_to_put = []
     for i in range(posts):
-        author = random.choice(user_names)
         p = datastore.Entity(client.key('Post'))
-        p['author'] = author
-        p['content'] = f"Seed post {i+1} by {author}"
-        p['created'] = base_time - timedelta(seconds=i)
-        client.put(p)
-        created_posts += 1
+        author = random.choice(user_names)
+        p.update({
+            'author': author,
+            'content': f"Seed post {i+1} by {author}",
+            'created': base_time - timedelta(seconds=i)
+        })
+        posts_to_put.append(p)
+        if len(posts_to_put) >= 500:
+            client.put_multi(posts_to_put)
+            posts_to_put = []
+            
+    if posts_to_put:
+        client.put_multi(posts_to_put)
+
     return {
         'users_total': users,
-        'users_created': created_users,
-        'posts_created': created_posts,
+        'users_created': created_count,
+        'posts_created': posts,
         'prefix': prefix
     }
 
@@ -121,7 +124,7 @@ def seed_data(users: int = 5, posts: int = 30, follows_min: int = 1, follows_max
 def index():
     user = session.get('user')
     timeline = get_timeline(user) if user else []
-    return render_template_string(TEMPLATE_INDEX, user=user, timeline=timeline)
+    return render_template('index.html', user=user, timeline=timeline)
 
 
 @app.route('/api/timeline')
@@ -171,9 +174,10 @@ def admin_seed():
     follows_min = _int('follows_min', 1)
     follows_max = _int('follows_max', 3)
     prefix = request.values.get('prefix', 'user')
+    clear = request.values.get('clear', '0') == '1'
     if users <= 0 or posts < 0:
         return jsonify({'error': 'invalid parameters'}), 400
-    result = seed_data(users=users, posts=posts, follows_min=follows_min, follows_max=follows_max, prefix=prefix)
+    result = seed_data(users=users, posts=posts, follows_min=follows_min, follows_max=follows_max, prefix=prefix, clear=clear)
     return jsonify({'status': 'ok', **result})
 
 @app.route('/login', methods=['POST'])
@@ -202,7 +206,7 @@ def post():
     entity.update({
         'author': user,
         'content': content,
-        'created': datastore.helpers.datetime.datetime.utcnow()
+        'created': datetime.utcnow()
     })
     client.put(entity)
     return redirect(url_for('index'))
