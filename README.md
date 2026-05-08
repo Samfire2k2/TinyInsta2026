@@ -3,7 +3,7 @@
 
 **URL Application :** [https://tiny-494020.nw.r.appspot.com](https://tiny-494020.nw.r.appspot.com)
 
-## 1. Executive Summary
+## 1. Introduction
 Ce rapport évalue la capacité de passage à l'échelle (scalability) de TinyInsta sur Google App Engine. Nous analysons deux scénarios critiques : la montée en charge utilisateur (Concurrence) et l'impact de la taille du graphe social (Fan-out).
 
 ## 2. Expérience A : Concurrence (Scale Up)
