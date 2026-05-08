@@ -6,3 +6,4 @@ venv/
 .idea/
 results_tp.zip
 tmp_locust_results*
+.gcloudignore
