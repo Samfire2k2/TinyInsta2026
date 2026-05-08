@@ -71,10 +71,8 @@ def run_locust_test(concurrent_users: int, duration_seconds: int = 60, label="")
         # On lance le processus Locust en arrière-plan
         process = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, cwd=SCRIPT_DIR)
 
-        # IMPORTANT : On attend que le scaling s'opère pour mesurer les instances. 
-        # On augmente le délai pour laisser App Engine avoir le temps de scaler.
-        print(f"  [Locust] Test lancé ({duration_seconds}s)... Attente pour le scaling...", end="", flush=True)
-        time.sleep(30) # Augmenté de 10s à 30s pour laisser le temps au scaling
+        # On récupère le nombre d'instances immédiatement au lancement
+        print(f"  [Locust] Test lancé ({duration_seconds}s)...", end="", flush=True)
         nb_instances = get_gcloud_instances()
         
         # On attend la fin précise du processus sans ajouter de délai inutile
@@ -138,9 +136,6 @@ def run_concurrency_tests():
     
     # TP : 1000 users, 50 posts/user (50k total), 20 follows. On FORCE le clear.
     seed_app(1000, 50000, 20, clear=True)
-    # Pause cruciale : laisse l'instance respirer après les écritures massives
-    print("  [Cooldown] Pause de 15s après le seeding et avant de lancer Locust...")
-    time.sleep(15)
 
 
     for param in concurrency_levels:
@@ -155,7 +150,6 @@ def run_concurrency_tests():
                 'NB_INSTANCES': metrics.get('instances', 1)
             }
             results.append(result)
-            time.sleep(10)
     
     # Sauvegarde CSV
     csv_file = f'{OUTPUT_DIR}/conc.csv'
@@ -176,9 +170,6 @@ def run_fanout_tests():
     for param in follow_counts:
         # TP : 1000 users, 100 posts/user (100k total), 50 users simultanés, follows variables.
         seed_app(1000, 100000, param, clear=True)
-        # Pause cruciale : laisse l'instance respirer après les écritures massives
-        print("  [Cooldown] Pause de 15s après le seeding et avant de lancer Locust...")
-        time.sleep(15)
         
         for run in range(1, 4):  # 3 runs
             print(f"\n# FANOUT : {param} followers | Run {run}/3")
@@ -192,7 +183,6 @@ def run_fanout_tests():
                 'NB_INSTANCES': metrics.get('instances', 1)
             }
             results.append(result)
-            time.sleep(10)
     
     # Sauvegarde CSV
     csv_file = f'{OUTPUT_DIR}/fanout.csv'

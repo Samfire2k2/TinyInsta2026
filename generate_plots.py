@@ -5,9 +5,14 @@ import os
 def plot_csv(filename, title, xlabel, output_name):
     if not os.path.exists(filename):
         return
+    
     df = pd.read_csv(filename)
+    # Si l'en-tête est manquant (KeyError prévenu), on recharge avec les noms explicites
+    if 'PARAM' not in df.columns:
+        df = pd.read_csv(filename, header=None, names=["PARAM", "AVG_TIME", "RUN", "FAILED", "NB_INSTANCES"])
+
     # Nettoyage du "ms" pour calculs
-    df['AVG_TIME'] = df['AVG_TIME'].str.replace('ms', '').astype(float)
+    df['AVG_TIME'] = df['AVG_TIME'].astype(str).str.replace('ms', '').astype(float)
     
     # Groupement par paramètre pour moyenne et écart-type
     grouped = df.groupby('PARAM')['AVG_TIME'].agg(['mean', 'std']).fillna(0)
