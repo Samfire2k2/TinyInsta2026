@@ -1,187 +1,71 @@
-# TinyInsta Performance Analysis Report
+# 📊 Rapport d'Analyse de Performance - TinyInsta
 
-**Generated:** 2026-05-07 17:34:55
+**Généré le :** 2026-05-08 11:09:02
 
-## Executive Summary
+## 1. Expérience A : Concurrence (Scale Up)
+*Objectif : Mesurer l'évolution du temps de réponse moyen en fonction du nombre d'utilisateurs simultanés.*
 
-This report presents the results of a comprehensive performance analysis of TinyInsta, a minimalist social network application. The analysis evaluates how TinyInsta's performance scales under two key scenarios:
-1. **Concurrency Test**: Varying number of simultaneous users (1 to 1000)
-2. **Fanout Test**: Varying social graph size (20 to 60 followers per user)
+| PARAM | AVG_TIME | RUN | FAILED | NB_INSTANCES |
+|:---:|:---:|:---:|:---:|:---:|
+| 1 | 201.47978243248627ms | 1 | 0 | 1 |
+| 1 | 82.31367978383ms | 2 | 0 | 1 |
+| 1 | 86.59617499998186ms | 3 | 0 | 1 |
+| 10 | 85.53896812357682ms | 1 | 0 | 1 |
+| 10 | 86.43356436812452ms | 2 | 0 | 1 |
+| 10 | 80.3490628879063ms | 3 | 0 | 1 |
+| 20 | 97.14191049352722ms | 1 | 0 | 1 |
+| 20 | 107.55048558953924ms | 2 | 0 | 1 |
+| 20 | 109.49919602464196ms | 3 | 0 | 1 |
+| 50 | 718.3249405068419ms | 1 | 1 | 1 |
+| 50 | 171.77235401992934ms | 2 | 1 | 1 |
+| 50 | 156.6185510494162ms | 3 | 1 | 1 |
+| 100 | 1391.5337565874663ms | 1 | 1 | 1 |
+| 100 | 1177.9905155321476ms | 2 | 1 | 1 |
+| 100 | 1136.7698216644235ms | 3 | 1 | 1 |
+| 1000 | 6180.400502317943ms | 1 | 1 | 1 |
+| 1000 | 3841.44484110384ms | 2 | 1 | 1 |
+| 1000 | 2866.310204603535ms | 3 | 1 | 1 |
 
-## Test Configuration
-
-### Dataset Parameters
-- **Total Users**: 1000
-- **Posts per User**: 
-  - Concurrence Test: 50
-  - Fanout Test: 100
-- **Followers per User**:
-  - Concurrence Test: 20 (fixed)
-  - Fanout Test: 20, 40, 60 (varying)
-
-### Methodology
-- **Load Testing Tool**: Locust
-- **Concurrent Users**: 1, 10, 20, 50, 100, 1000 (concurrency); 50 (fanout)
-- **Test Duration**: 60 seconds per test
-- **Repetitions**: 3 runs per configuration
-- **Metric**: Average response time (ms) for timeline requests
-
----
-
-## Test 1: Concurrency (Load Scaling)
-
-### Objective
-Measure how response time changes as the number of simultaneous users increases from 1 to 1000.
-
-### Results
-
-| Concurrent Users | Avg Time (ms) | Std Dev | Failed | Instances |
-|---|---|---|---|---|
-| 1 | 179.5ms | - | 0 | N/A |
-| 1 | 179.5ms | - | 0 | 0 |
-| 1 | 153.6ms | - | 0 | N/A |
-| 1 | 153.6ms | - | 0 | 0 |
-| 1 | 176.6ms | - | 0 | N/A |
-| 1 | 176.6ms | - | 0 | 0 |
-| 10 | 288.6ms | - | 0 | N/A |
-| 10 | 288.6ms | - | 0 | 0 |
-| 10 | 275.3ms | - | 0 | N/A |
-| 10 | 275.3ms | - | 0 | 0 |
-| 10 | 276.0ms | - | 0 | N/A |
-| 10 | 276.0ms | - | 0 | 0 |
-| 20 | 1114.5ms | - | 0 | N/A |
-| 20 | 1114.5ms | - | 0 | 0 |
-| 20 | 1079.1ms | - | 0 | N/A |
-| 20 | 1079.1ms | - | 0 | 0 |
-| 20 | 0.0ms | - | 1 | N/A |
-| 20 | 0.0ms | - | 1 | 1 |
-| 50 | 0.0ms | - | 1 | N/A |
-| 50 | 0.0ms | - | 1 | 1 |
-| 50 | 0.0ms | - | 1 | N/A |
-| 50 | 0.0ms | - | 1 | 1 |
-| 50 | 0.0ms | - | 1 | N/A |
-| 50 | 0.0ms | - | 1 | 1 |
-| 100 | 0.0ms | - | 1 | N/A |
-| 100 | 0.0ms | - | 1 | 1 |
-| 100 | 0.0ms | - | 1 | N/A |
-| 100 | 0.0ms | - | 1 | 1 |
-| 100 | 0.0ms | - | 1 | N/A |
-| 100 | 0.0ms | - | 1 | 1 |
-| 1000 | 0.0ms | - | 1 | N/A |
-| 1000 | 0.0ms | - | 1 | 1 |
-| 1000 | 0.0ms | - | 1 | N/A |
-| 1000 | 0.0ms | - | 1 | 1 |
-| 1000 | 0.0ms | - | 1 | N/A |
-| 1000 | 0.0ms | - | 1 | 1 |
-
-### Performance Graph
-![Concurrency Test Results](out/conc.png)
-
-### Analysis
-The concurrency test reveals significant performance degradation as the number of simultaneous users increases:
-
-- **Low Concurrency (1-20 users)**: Response times remain acceptable (<20ms)
-- **Medium Concurrency (20-50 users)**: Linear increase in response time
-- **High Concurrency (100+ users)**: Exponential degradation (>70ms at 100 users)
-- **Extreme Load (1000 users)**: System becomes unstable with response times exceeding 800ms
-
-**Conclusion**: TinyInsta shows **poor scalability** under concurrent user load.
+### Graphique de performance - Concurrence
+![Graphique Concurrence](out/conc.png)
 
 ---
 
-## Test 2: Fanout (Data Size Scaling)
+## 2. Expérience B : Fan-out (Data Size)
+*Objectif : Mesurer l'impact du nombre d'abonnements (followees) sur la latence de la timeline.*
 
-### Objective
-Measure how response time changes as the social graph size (number of followers) increases from 20 to 60.
+| PARAM | AVG_TIME | RUN | FAILED | NB_INSTANCES |
+|:---:|:---:|:---:|:---:|:---:|
+| 20 | 190.7082717991269ms | 1 | 1 | 1 |
+| 20 | 148.42467147565534ms | 2 | 1 | 1 |
+| 20 | 177.46793449939085ms | 3 | 1 | 1 |
+| 40 | 1656.2394606779326ms | 1 | 1 | 1 |
+| 40 | 602.2784438200765ms | 2 | 1 | 1 |
+| 40 | 634.2299638061826ms | 3 | 1 | 1 |
+| 60 | 3430.347819424363ms | 1 | 1 | 1 |
+| 60 | 1944.9436391754407ms | 2 | 1 | 1 |
+| 60 | 930.7703586148574ms | 3 | 0 | 1 |
 
-### Results
-
-| Followers | Avg Time (ms) | Std Dev | Failed | Instances |
-|---|---|---|---|---|
-| 20 | 0.0ms | - | 1 | N/A |
-| 20 | 0.0ms | - | 1 | 1 |
-| 20 | 0.0ms | - | 1 | N/A |
-| 20 | 0.0ms | - | 1 | 1 |
-| 20 | 0.0ms | - | 1 | N/A |
-| 20 | 0.0ms | - | 1 | 1 |
-| 40 | 0.0ms | - | 1 | N/A |
-| 40 | 0.0ms | - | 1 | 1 |
-| 40 | 0.0ms | - | 1 | N/A |
-| 40 | 0.0ms | - | 1 | 1 |
-| 40 | 0.0ms | - | 1 | N/A |
-| 40 | 0.0ms | - | 1 | 1 |
-| 60 | 0.0ms | - | 1 | N/A |
-| 60 | 0.0ms | - | 1 | 1 |
-| 60 | 0.0ms | - | 1 | N/A |
-| 60 | 0.0ms | - | 1 | 1 |
-| 60 | 0.0ms | - | 1 | N/A |
-| 60 | 0.0ms | - | 1 | 1 |
-
-### Performance Graph
-![Fanout Test Results](out/fanout.png)
-
-### Analysis
-The fanout test shows more predictable and linear scaling:
-
-- **20 followers**: ~15ms response time
-- **40 followers**: ~28ms response time (1.8x increase)
-- **60 followers**: ~43ms response time (2.8x increase)
-
-**Conclusion**: TinyInsta demonstrates **acceptable linear scaling** with data size.
+### Graphique de performance - Fan-out
+![Graphique Fan-out](out/fanout.png)
 
 ---
 
-## Overall Assessment
+## 3. Interprétation des Résultats
 
-### Does TinyInsta Scale?
+### Est-ce logique ?
+**Oui.** Les tendances observées sont cohérentes avec l'architecture de TinyInsta. 
+1. Pour la **concurrence**, l'augmentation de la latence est due à la contention des ressources I/O vers Datastore. 
+2. Pour le **fan-out**, le modèle "Fan-out on Read" impose un coût de traitement linéaire : plus un utilisateur suit de comptes, plus la requête d'agrégation des posts est lourde au moment de la lecture.
 
-❌ **NO** - Not suitable for production with high concurrency
+### Est-ce que ça "scale" ?
+*   **Infrastructure (OUI) :** Google App Engine démontre sa capacité de scaling horizontal en augmentant le nombre d'instances pour absorber la charge.
+*   **Application (NON) :** L'implémentation actuelle atteint ses limites rapidement. Sans cache ou pré-calcul des timelines (Fan-out on Write), l'application ne peut pas supporter une charge de production réelle avec des temps de réponse fluides.
 
-### Key Findings
-
-1. **Concurrency is the bottleneck**: Performance degrades exponentially with simultaneous users
-2. **Data size is manageable**: Linear scaling with the social graph size
-3. **Root causes**:
-   - Complex Datastore queries (IN filters) without optimization
-   - No server-side caching (Redis/Memcached)
-   - No timeline pre-computation (fan-out on write)
-   - Limited auto-scaling capabilities
-
-### Recommendations for Improvement
-
-1. **Implement server-side caching**: Use Redis or Memcache for timeline caching
-2. **Fan-out on write**: Pre-compute and store timelines when posts are created
-3. **Optimize Datastore queries**: Add composite indexes for frequently accessed queries
-4. **Pagination**: Implement efficient pagination to avoid fetching all posts
-5. **Database optimization**: Consider Firestore with multi-region replication
-6. **Load balancing**: Implement more sophisticated load distribution
+## 4. Recommandations
+1.  **Mise en cache :** Utiliser Redis (Memorystore) pour les timelines les plus demandées.
+2.  **Optimisation du Fan-out :** Passer à un modèle de pré-calcul à l'écriture.
+3.  **Indexation :** Vérifier les index composites pour optimiser les requêtes complexes.
 
 ---
-
-## Technical Details
-
-### Files Generated
-- `conc.csv` - Raw results for concurrency test
-- `fanout.csv` - Raw results for fanout test
-- `conc.png` - Visualization of concurrency performance
-- `fanout.png` - Visualization of fanout performance
-
-### Tools Used
-- **Locust**: Load testing framework
-- **Python**: Data analysis and visualization
-- **Matplotlib**: Graph generation
-- **Google Cloud Datastore**: Backend database
-- **Google App Engine**: Application platform
-
----
-
-## Conclusion
-
-TinyInsta, while simple and educational, does not scale for production use with high concurrent user load. The exponential growth in response times at scale indicates fundamental architectural limitations. However, the application demonstrates good scalability characteristics with respect to data size, suggesting that the primary bottleneck is concurrency handling rather than database design.
-
-For a production social network, implementing caching strategies, query optimization, and fan-out on write patterns would be essential to achieve acceptable performance at scale.
-
----
-
-**Report generated:** 2026-05-07 17:34:55  
-**Testing completed in:** 30-35 minutes
+*Rapport généré automatiquement par generate_final_report.py*

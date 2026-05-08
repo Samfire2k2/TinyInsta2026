@@ -77,10 +77,11 @@ def ensure_users(client: datastore.Client, names: list[str], dry: bool):
             users_to_create.append(entity)
     
     if not dry and users_to_create:
-        # Datastore limite à 500 entités par appel multi
-        for i in range(0, len(users_to_create), 500):
-            client.put_multi(users_to_create[i:i+500])
-            
+        # On réduit à 200 pour éviter les DeadlineExceeded
+        for i in range(0, len(users_to_create), 200):
+            client.put_multi(users_to_create[i:i+200])
+            time.sleep(0.1) # Petit délai pour la stabilité
+
     return len(users_to_create)
 
 
@@ -105,8 +106,9 @@ def assign_follows(client: datastore.Client, names: list[str], fmin: int, fmax: 
         updated_users.append(entity)
 
     if not dry and updated_users:
-        for i in range(0, len(updated_users), 500):
-            client.put_multi(updated_users[i:i+500])
+        for i in range(0, len(updated_users), 200):
+            client.put_multi(updated_users[i:i+200])
+            time.sleep(0.1)
 
 
 def create_posts(client: datastore.Client, names: list[str], total_posts: int, dry: bool):
@@ -128,11 +130,12 @@ def create_posts(client: datastore.Client, names: list[str], total_posts: int, d
         
         posts_batch.append(post)
         
-        # Envoi par paquets de 500
-        if not dry and len(posts_batch) >= 500:
+        # Envoi par paquets de 200 pour plus de stabilité (seeding progressif)
+        if not dry and len(posts_batch) >= 200:
             client.put_multi(posts_batch)
             posts_batch = []
             print(f"  [Seed] {i+1}/{total_posts} posts créés...", end="\r", flush=True)
+            time.sleep(0.2) # On laisse Datastore indexer
 
     if not dry and posts_batch:
         client.put_multi(posts_batch)
@@ -142,7 +145,7 @@ def create_posts(client: datastore.Client, names: list[str], total_posts: int, d
 
 def main():
     args = parse_args()
-    # Spécifier le projet ET la base résout l'erreur RESOURCE_PROJECT_INVALID
+    # Spécifier explicitement la base 'default' pour éviter l'erreur 404 sur '(default)'
     client = datastore.Client(project='tiny-494020', database='default')
 
     user_names = [f"{args.prefix}{i}" for i in range(1, args.users + 1)]

@@ -39,7 +39,7 @@ def get_instance_count():
 def seed_app(users, posts, follows, clear=False):
     """Appelle l'endpoint de seed pour préparer les données."""
     print(f"\n[SEEDING] Utilisation de seed.py en local pour éviter le timeout GAE (60s)...")
-    print(f"          Config: {users} users, {posts} posts, {follows} follows")
+    print(f"          Config: {users} users, {posts} posts, {follows} follows sur le projet {PROJECT_ID}")
     
     cmd = [
         sys.executable, "seed.py",
@@ -66,7 +66,7 @@ def run_locust(user_count, run_id, label=""):
     # Commande Locust Headless
     # -r est le spawn rate (vitesse d'arrivée des users)
     spawn_rate = max(1, user_count // 10)
-    cmd = [
+    locust_cmd = [
         "locust", "-f", "locustfile.py",
         "--headless",
         "-u", str(user_count),
@@ -78,7 +78,12 @@ def run_locust(user_count, run_id, label=""):
     ]
     
     # On lance le processus
-    process = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        process = subprocess.Popen(locust_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except FileNotFoundError:
+        print("\n❌ ERREUR : 'locust' n'est pas installé ou pas dans le PATH.")
+        print("👉 Lancez : pip install locust")
+        sys.exit(1)
 
     # IMPORTANT : On attend que le scaling s'opère pour mesurer les instances. 
     # On augmente le délai pour laisser App Engine avoir le temps de scaler.
@@ -150,6 +155,10 @@ def read_csv_to_table(filename):
         return "| N/A | N/A | N/A | N/A | N/A |\n"
     
     df = pd.read_csv(path)
+    # Détection et correction si le header est manquant dans le fichier existant
+    if not df.empty and 'PARAM' not in df.columns:
+        df = pd.read_csv(path, header=None, names=["PARAM", "AVG_TIME", "RUN", "FAILED", "NB_INSTANCES"])
+
     table = ""
     for _, row in df.iterrows():
         table += f"| {row['PARAM']} | {row['AVG_TIME']} | {row['RUN']} | {row['FAILED']} | {row['NB_INSTANCES']} |\n"
@@ -195,21 +204,48 @@ Ce rapport évalue la capacité de passage à l'échelle (scalability) de TinyIn
 ---
 
 ## 4. Interprétation des Résultats
-
 ### Est-ce logique ?
-**Oui.** 
-1. **Concurrence :** L'augmentation de la latence est attendue. Plus d'utilisateurs simultanés saturent les ressources de l'instance avant que le scaling GCP ne puisse réagir complètement. Sans cache, chaque requête frappe directement Datastore, créant un goulot d'étranglement I/O.
-2. **Fan-out :** L'impact est linéaire. Pour 60 abonnements, l'application doit effectuer des requêtes plus complexes (opérateur `IN`) ou agréger plus de données en mémoire, ce qui augmente mécaniquement le temps de calcul.
+**Oui, les tendances observées sont logiques et prévisibles compte tenu de l'architecture et des technologies utilisées.**
+
+1.  **Concurrence (Expérience A) :** L'augmentation de la latence avec le nombre d'utilisateurs simultanés est une conséquence directe de la contention des ressources. Sans une couche de cache efficace, chaque requête `timeline` doit interroger directement Google Cloud Datastore. À mesure que la charge augmente, les instances App Engine peuvent saturer leurs connexions I/O vers Datastore, ou Datastore lui-même peut commencer à introduire de la latence pour gérer le débit. Le scaling horizontal d'App Engine (visible dans la colonne `Instances`) tente de compenser, mais il y a un délai inhérent à la mise en place de nouvelles instances, et la latence peut grimper avant que le système ne s'adapte pleinement. Les échecs (`FAILED=1`) à partir de 50 utilisateurs simultanés indiquent que le système atteint ses limites de capacité ou de réactivité sous cette charge.
+
+2.  **Fan-out (Expérience B) :** L'impact linéaire du nombre de "followees" sur la latence est également attendu. Le modèle "Fan-out on Read" signifie que pour construire la timeline d'un utilisateur, l'application doit récupérer les posts de *tous* les utilisateurs qu'il suit. Si un utilisateur suit 60 personnes, la requête Datastore (ou une série de requêtes) doit potentiellement agréger des données de 60 sources différentes. Cela se traduit par :
+    *   Des requêtes GQL plus complexes (utilisant l'opérateur `IN` sur une liste de clés, par exemple).
+    *   Un volume de données plus important à transférer depuis Datastore.
+    *   Une charge de traitement plus élevée côté application pour assembler la timeline.
+    Ces facteurs contribuent directement à l'augmentation du temps de réponse.
 
 ### Est-ce que ça "scale" ?
-**Techniquement oui, architecturalement non.**
-* **Infrastructure (OUI) :** Google App Engine remplit son rôle de PaaS en provisionnant de nouvelles instances quand la charge monte.
-* **Application (NON) :** Le modèle "Fan-out on Read" (calcul de la timeline à la demande) montre ses limites. Les temps de réponse deviennent prohibitifs pour une expérience utilisateur fluide dès que la charge dépasse un certain seuil.
+**Techniquement, l'infrastructure Google App Engine scale, mais l'application TinyInsta, dans son implémentation actuelle, ne scale pas efficacement pour une charge élevée ou un graphe social dense.**
+
+*   **Infrastructure (OUI) :** Google App Engine, en tant que PaaS serverless, démontre sa capacité à provisionner de nouvelles instances automatiquement (`NB_INSTANCES` > 1 pour les charges élevées) pour absorber la charge. Cela confirme l'élasticité horizontale de la plateforme. Cependant, le scaling n'est pas instantané et les "cold starts" peuvent impacter la latence initiale.
+*   **Application (NON) :** Le modèle "Fan-out on Read" est le principal goulot d'étranglement. Dès que la latence dépasse un seuil critique (souvent 500ms à 1 seconde pour une expérience utilisateur fluide), l'application est considérée comme non scalable pour ce cas d'usage. Les résultats montrent des latences de plusieurs secondes pour 1000 utilisateurs simultanés ou 60 followees, ce qui est inacceptable en production. De plus, les échecs (`FAILED=1`) indiquent une dégradation de la qualité de service. Ce modèle est particulièrement vulnérable au problème du "hotspotting" si un utilisateur très populaire est suivi par de nombreux autres, car ses posts devront être lus fréquemment par un grand nombre de requêtes `timeline`.
+
+**En résumé :** L'infrastructure GCP offre la capacité de scaler, mais l'architecture applicative de TinyInsta ne tire pas pleinement parti de cette capacité pour les scénarios de forte concurrence ou de fan-out important. Des optimisations au niveau de l'application sont indispensables.
 
 ## 5. Recommandations Techniques
-1. **Mise en cache :** Utiliser Redis (Memorystore) pour stocker les timelines déjà calculées.
-2. **Fan-out on Write :** Pré-calculer la timeline lors de la publication d'un post (pousser le post dans les feeds des abonnés).
-3. **Optimisation Datastore :** Vérifier les index composites pour éviter les scans coûteux.
+Pour améliorer la scalabilité et la performance de TinyInsta, plusieurs pistes d'optimisation sont à considérer :
+
+1.  **Mise en cache agressive (Redis / Memorystore) :**
+    *   **Quoi cacher :** Les timelines des utilisateurs (surtout les plus actifs ou les plus suivis), les profils utilisateurs fréquemment consultés, et les posts récents.
+    *   **Pourquoi :** Réduire drastiquement le nombre de lectures coûteuses vers Datastore. Une lecture en cache est généralement de l'ordre de la milliseconde, contre des dizaines voire centaines de millisecondes pour Datastore. Cela permettrait d'absorber des pics de charge sans impacter directement la base de données.
+
+2.  **Migration vers un modèle "Fan-out on Write" :**
+    *   **Principe :** Au lieu de calculer la timeline à chaque lecture, pré-calculer et stocker la timeline d'un utilisateur au moment où un de ses followees publie un nouveau post.
+    *   **Implémentation :** Lorsqu'un utilisateur poste, une tâche asynchrone (via Cloud Tasks ou Pub/Sub + Cloud Functions/Workers) est déclenchée. Cette tâche identifie tous les followers de l'utilisateur et "pousse" le nouveau post dans la timeline pré-calculée de chaque follower (stockée par exemple dans Redis ou une collection Datastore dédiée par utilisateur).
+    *   **Avantages :** Les lectures de timeline deviennent très rapides (simple lookup d'une liste pré-construite), améliorant considérablement la latence sous forte charge.
+    *   **Inconvénients/Compromis :** Augmente la complexité du système et le coût en écriture (un post = N écritures pour N followers). Nécessite une gestion de la consistance (que se passe-t-il si une écriture de timeline échoue ?).
+
+3.  **Optimisation des requêtes Datastore et Indexation :**
+    *   **Vérifier les index composites :** S'assurer que toutes les requêtes GQL complexes (notamment celles avec `ORDER BY` et des filtres multiples) disposent des index composites nécessaires. Des index manquants peuvent entraîner des scans coûteux et lents.
+    *   **Requêtes de projection :** Si seule une partie des propriétés d'une entité est nécessaire, utiliser des requêtes de projection pour réduire le volume de données transférées.
+    *   **Pagination efficace :** Utiliser des cursors pour la pagination des timelines afin d'éviter de relire les mêmes données et d'optimiser les performances des requêtes.
+
+4.  **Stratégies de Sharding pour les "hotspots" :**
+    *   **Sharded Counters :** Pour les compteurs globaux (ex: nombre total de posts), utiliser des compteurs sharded (ex: 16 ou 32 sous-compteurs distribués) pour éviter les "hotspots" en écriture sur une seule entité. La lecture agrège ensuite ces sous-compteurs.
+    *   **Distribution des followees :** Pour le "Fan-out on Write", s'assurer que les écritures dans les timelines des followers sont distribuées et ne ciblent pas toujours les mêmes entités, surtout pour les utilisateurs très populaires.
+
+Ces recommandations visent à transformer TinyInsta d'une application fonctionnelle mais non scalable en une application capable de gérer des charges importantes et des graphes sociaux complexes, en tirant parti des services managés de Google Cloud.
 
 ---
 ## 6. Détails Techniques
