@@ -1,5 +1,5 @@
 <!-- START_BENCHMARK -->
-# 📊 Rapport d'Analyse de Performance - TinyInsta - RAVARD Samuel
+# Rapport d'analyse de Performance - TinyInsta - RAVARD Samuel
 
 **Généré le :** 2026-05-08 15:24:28
 **URL Application :** [https://tiny-494020.nw.r.appspot.com](https://tiny-494020.nw.r.appspot.com)
@@ -70,21 +70,17 @@ La distinction entre l'élasticité de l'infrastructure et la scalabilité réel
 **Conclusion technique :** Nous avons privilégié la **simplicité d'écriture** (un post est écrit une seule fois) au détriment de la **performance de lecture**. Pour scaler, il faut inverser cette logique.
 
 ## 5. Recommandations
-1.  **Migration vers "Fan-out on Write" (Modèle Push) :**
-    - *Théorie :* Basculer la complexité du temps de lecture ($O(N)$ followees) vers le temps d'écriture.
-    - *Action :* Utiliser le pattern **Outbox** : lors d'un post, on écrit dans Datastore ET on publie un message dans **Cloud Pub/Sub**.
-2.  **Utilisation de Cloud Pub/Sub pour l'Éventuelle Consistance :**
-    - *Théorie :* Adopter le modèle **BASE** (Basically Available, Soft-state, Eventually Consistent).
-    - *Action :* Des workers asynchrones consomment les messages Pub/Sub pour mettre à jour les "Feeds" pré-calculés des abonnés.
-3.  **Sharding des Données :**
-    - *Théorie :* Pour éviter les "Hotspots" (ex: une célébrité comme Justin Bieber), il faut partitionner les index par `user_id` (Sharding).
-    - *Action :* S'assurer que les clés de partitionnement (Shard Keys) distribuent uniformément la charge sur les nœuds de Datastore.
-4.  **Caching via Memorystore (Redis) :**
-    - *Théorie :* Réduire la **Veracity** (pression sur la base de vérité) en utilisant une mémoire distribuée pour les données volatiles.
-    - *Action :* Stocker les timelines pré-calculées en RAM pour un accès en <10ms.
+Ceci est à titre de recommandations.
+La première étape cruciale pour stabiliser l'application consiste à migrer vers un modèle de **Fan-out on Write (Modèle Push)**. L'idée est de basculer la complexité algorithmique, actuellement subie lors de la lecture ($O(N)$ selon le nombre d'abonnements), vers le moment de l'écriture. En pratique, cela nécessite la mise en place d'un pattern **Outbox** : chaque nouvelle publication doit être enregistrée dans Datastore tout en déclenchant simultanément un message via **Cloud Pub/Sub**. Ce découplage permet d'alléger immédiatement la charge sur la génération dynamique des timelines.
+
+Pour soutenir cette architecture à grande échelle, il est indispensable d'adopter une approche **BASE** (Basically Available, Soft-state, Eventually Consistent) via l'utilisation de **Cloud Pub/Sub**. Plutôt que de chercher une consistance forte, coûteuse en ressources, nous déléguerons la mise à jour des flux à des workers asynchrones. Ces derniers consommeront les messages pour alimenter des "Feeds" pré-calculés pour chaque abonné, garantissant ainsi une réactivité optimale du système, même si une légère latence de propagation est acceptée.
+
+Par ailleurs, la gestion des "Hotspots", typique des comptes à forte influence, impose une stratégie de **Sharding des données**. En partitionnant nos index par `user_id` et en utilisant des clés de partitionnement (**Shard Keys**) judicieusement choisies, nous pourrons distribuer uniformément la charge de travail sur les différents nœuds de Datastore. Cette approche prévient la saturation d'une entité unique et assure une scalabilité horizontale réelle de la base de données.
+
+Enfin, l'introduction d'une couche de cache performante avec **Google Cloud Memorystore (Redis)** est essentielle pour atteindre des temps de réponse inférieurs à 10ms. En stockant les timelines pré-calculées directement en RAM, on réduit drastiquement la pression sur la base de données principale (diminution de la **Veracity**). Ce stockage distribué pour les données volatiles est, un peu, la pièce finale permettant de transformer TinyInsta en une plateforme capable de supporter des pics de charge massifs sans dégradation de l'expérience utilisateur.
 
 ---
-## 6. Détails Techniques
+## 6. Détails techniques
 - **Chargeur :** Locust (Headless mode)
 - **Backend :** Python 3.10 sur Google App Engine Standard
 - **Base de données :** Google Cloud Datastore
