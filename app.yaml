@@ -4,10 +4,10 @@ entrypoint: gunicorn -b :$PORT main:app
 instance_class: F1
 
 automatic_scaling:
-  min_instances: 0 # Permet de scaler à zéro en cas d'inactivité pour économiser des coûts
-  max_instances: 5 # Limite le nombre maximum d'instances pour contrôler le budget du TP
-  target_cpu_utilization: 0.6 # Déclenche le scaling quand l'utilisation CPU dépasse 60%
-  max_concurrent_requests: 80 # Nombre maximum de requêtes simultanées par instance
+  min_instances: 0
+  max_instances: 5
+  target_cpu_utilization: 0.6
+  max_concurrent_requests: 80
 
 handlers:
 - url: /
